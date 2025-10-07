@@ -10,7 +10,7 @@ import joblib
 # -----------------------------
 # Load Whisper (OpenAI)
 # -----------------------------
-whisper_model = whisper.load_model("base")   
+whisper_model = whisper.load_model("tiny")   
 
 # -----------------------------
 # Load IndicBERT Model
