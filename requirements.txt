@@ -9,4 +9,3 @@ transformers
 scikit-learn
 joblib
 python-multipart
-io
