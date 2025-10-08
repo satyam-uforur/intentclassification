@@ -1,23 +1,34 @@
 import io
 import torch
-import whisper
 import librosa
 from fastapi import FastAPI, File, UploadFile
 from fastapi.responses import JSONResponse
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from transformers import (
+    WhisperProcessor,
+    WhisperForConditionalGeneration,
+    AutoTokenizer,
+    AutoModelForSequenceClassification
+)
 import joblib
 
 # -----------------------------
-# Load Whisper (OpenAI)
+# Device
 # -----------------------------
-whisper_model = whisper.load_model("tiny")   
+device = "cuda" if torch.cuda.is_available() else "cpu"
+
+# -----------------------------
+# Load Hugging Face Whisper
+# -----------------------------
+WHISPER_MODEL_NAME = "openai/whisper-tiny"   # or "base" if you have more RAM
+processor = WhisperProcessor.from_pretrained(WHISPER_MODEL_NAME)
+whisper_model = WhisperForConditionalGeneration.from_pretrained(WHISPER_MODEL_NAME).to(device)
+whisper_model.eval()
 
 # -----------------------------
 # Load IndicBERT Model
 # -----------------------------
 INDIC_MODEL_PATH = "indic_model"
 LABEL_ENCODER_PATH = "label_encoder.pkl"
-device = "cuda" if torch.cuda.is_available() else "cpu"
 
 tokenizer = AutoTokenizer.from_pretrained(INDIC_MODEL_PATH)
 indic_model = AutoModelForSequenceClassification.from_pretrained(INDIC_MODEL_PATH).to(device)
@@ -28,7 +39,7 @@ label_encoder = joblib.load(LABEL_ENCODER_PATH)
 # -----------------------------
 # FastAPI app
 # -----------------------------
-app = FastAPI(title="🎤 Whisper + IndicBERT API", version="1.0")
+app = FastAPI(title="🎤 Whisper (HF) + IndicBERT API", version="1.0")
 
 # -----------------------------
 # Helper: Intent Classification
@@ -51,13 +62,19 @@ async def process_audio(file: UploadFile = File(...)):
         if not file.filename.lower().endswith(".wav"):
             return JSONResponse({"error": "Only WAV files are supported"}, status_code=400)
 
-        # Read WAV bytes into memory
+        # Read WAV bytes
         audio_bytes = await file.read()
+
+        # Load audio into librosa (convert to 16kHz mono)
         y, sr = librosa.load(io.BytesIO(audio_bytes), sr=16000, mono=True)
 
-        # Whisper transcription
-        result = whisper_model.transcribe(y, fp16=False)
-        transcription = result["text"].strip()
+        # Convert waveform to Whisper input
+        input_features = processor(y, sampling_rate=16000, return_tensors="pt").input_features.to(device)
+
+        # Transcribe using Whisper
+        with torch.no_grad():
+            predicted_ids = whisper_model.generate(input_features)
+        transcription = processor.batch_decode(predicted_ids, skip_special_tokens=True)[0].strip()
 
         # IndicBERT intent classification
         intent = classify_intent(transcription)
